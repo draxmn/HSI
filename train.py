@@ -10,40 +10,56 @@ from torch.autograd import Variable
 import  os
 import time
 import scipy.io as sio
-
+import torch.utils.data as data
 from dataset import DatasetFromHdf5
 from resblock import resblock,conv_relu_res_relu_block
 from utils import AverageMeter,initialize_logger,save_checkpoint,record_loss
 from loss import rrmse_loss
 import gc
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device('cuda')
+
+#import GPUtil
+#GPUtil.showUtilization()
+
+
 def main():
-    
+    #https://drive.google.com/file/d/1QxQxf2dzfSbvCgWlI9VuxyBgfmQyCmfE/view?usp=sharing - train data
+    #https://drive.google.com/file/d/11INkjd_ajT-RSCSFqfB7reLI6_m1jCAC/view?usp=sharing - val data
+    #https://drive.google.com/file/d/1m0EZaRjla2o_eL3hOd7UMkSwoME5mF4A/view?usp=sharing - extra val data
     cudnn.benchmark = True
   #  train_data = DatasetFromHdf5('C:/Users/alawy/Desktop/Training/Training-shadesofgrey/train_tbands.h5')
-    train_data = DatasetFromHdf5('C:/Users/alawy/Desktop/Transferlearning/train.h5')
+    train_data = DatasetFromHdf5('/storage/train_cropped14.h5')
 
     print(len(train_data))
-
-    val_data = DatasetFromHdf5('C:/Users/alawy/Desktop/Transferlearning/valid.h5')
-    print(len(val_data))
+    val_data_extra = DatasetFromHdf5('/storage/valid_extra99.h5')
+    val_data = DatasetFromHdf5('/storage/valid_cropped89.h5')
+    new_val=[]
+    new_val.append(val_data)
+    new_val.append(val_data_extra)
+    print(len(new_val))
+    print('con')
+    val_new = data.ConcatDataset(new_val)
+    print(len(val_new))
 
     # Data Loader (Input Pipeline)
     train_data_loader = DataLoader(dataset=train_data, 
-                                   num_workers=1,  
-                                   batch_size=64,
+                                   num_workers=4,  
+                                   batch_size=512,
                                    shuffle=True,
                                    pin_memory=True)
-    val_loader = DataLoader(dataset=val_data,
+    val_loader = DataLoader(dataset=val_new,
                             num_workers=1, 
                             batch_size=1,
                             shuffle=False,
                            pin_memory=True)
     # Dataset
-    torch.set_num_threads(12)
+   # torch.set_num_threads(12)
     # Model               
-    model = resblock(conv_relu_res_relu_block, 10, 3, 25)
-    model = model.to(device)
+    model = resblock(conv_relu_res_relu_block, 16, 3, 25)
+    if torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+    if torch.cuda.is_available():
+        model = model.to('cuda')
     # Parameters, Loss and Optimizer
     start_epoch = 0
     end_epoch = 1000
@@ -51,9 +67,10 @@ def main():
     iteration = 0
     record_test_loss = 1000
     criterion = rrmse_loss
-    optimizer=torch.optim.AdamW(model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
-    
-    model_path = './models/'
+    #optimizer=torch.optim.AdamW(model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+    optimizer=torch.optim.Adam(model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=0.01)
+   # model_path = '/storage/models-crop/'
+    model_path = './models-crop/'
     if not os.path.exists(model_path):
         os.makedirs(model_path)
     loss_csv = open(os.path.join(model_path,'loss.csv'), 'w+')
@@ -62,7 +79,9 @@ def main():
     logger = initialize_logger(log_dir)
     
     # Resume
-    resume_file = '' 
+    resume_file = ''
+    #resume_file = '/storage/notebooks/r9h1kyhq8oth90j/models/hscnn_5layer_dim10_69.pkl' 
+    #resume_file = '/storage/notebooks/r9h1kyhq8oth90j/models-crop/hscnn_5layer_dim10_95.pkl'
     if resume_file:
         if os.path.isfile(resume_file):
             print("=> loading checkpoint '{}'".format(resume_file))
@@ -97,9 +116,9 @@ def main():
 # Training 
 def train(train_data_loader, model, criterion, optimizer, iteration, init_lr ,end_epoch):
     losses = AverageMeter()
-0 GBFR VAzdefgc sx    for i, (images, labels) in enumerate(train_data_loader):
-        labels = labels.cuda()
-        images = images.cuda()
+    for i, (images, labels) in enumerate(train_data_loader):
+        labels = labels.to('cuda')
+        images = images.to('cuda')
         images = Variable(images)
         labels = Variable(labels) 
         # Decaying Learning Rate
@@ -129,8 +148,8 @@ def validate(val_loader, model, criterion):
     losses = AverageMeter()
 
     for i, (input, target) in enumerate(val_loader):
-        input = input.cuda()
-        target = target.cuda()
+        input = input.to('cuda')
+        target = target.to('cuda')
         input_var = torch.autograd.Variable(input)
         target_var = torch.autograd.Variable(target)
 
